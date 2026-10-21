@@ -1,20 +1,60 @@
-"""Registry for security tools."""
+"""Agent base classes and swarm contracts."""
 
 from __future__ import annotations
 
-from greth.tools.internet import INTERNET, InternetTool
-from greth.tools.terminal import TERMINAL, TerminalTool
+from abc import ABC, abstractmethod
+from typing import Any
 
-TOOL_REGISTRY = {
-    "internet": INTERNET,
-    "terminal": TERMINAL,
-    "httpx": INTERNET,
-    "bash": TERMINAL,
-}
+from greth.core.blackboard import Blackboard
+from greth.core.models import Finding
 
 
-def get_tool(name: str):
-    tool = TOOL_REGISTRY.get(name)
-    if tool is None:
-        raise KeyError(f"Unknown tool: {name}")
-    return tool
+class AgentBase(ABC):
+    """Base class for swarm specialists."""
+
+    name: str = "base"
+
+    def __init__(self, *, blackboard: Blackboard | None = None, config: Any | None = None, **kwargs: Any) -> None:
+        self.blackboard = blackboard or Blackboard()
+        self.config = config
+        self.kwargs = kwargs
+
+    def publish(
+        self,
+        *,
+        kind: str,
+        target: str,
+        payload: dict[str, Any] | None = None,
+        confidence: float = 0.5,
+        summary: str = "",
+        severity: str = "info",
+        agent: str | None = None,
+    ) -> Finding:
+        finding = Finding(
+            campaign_id="campaign",
+            agent=agent or self.name,
+            kind=kind,
+            target=target,
+            payload=payload or {},
+            confidence=confidence,
+            severity=severity,
+            summary=summary,
+            pheromone_base=max(0.0, min(confidence, 1.0)),
+            half_life_sec=3600,
+        )
+        return self.blackboard.write(finding, topic=kind)
+
+    @abstractmethod
+    def trigger(self, finding: Any) -> bool:
+        return False
+
+    @abstractmethod
+    def handle(self, finding: Any) -> Any:
+        raise NotImplementedError
+
+    def loop_once(self, findings: list[Any]) -> list[Any]:
+        actions: list[Any] = []
+        for finding in findings:
+            if self.trigger(finding):
+                actions.append(self.handle(finding))
+        return actions

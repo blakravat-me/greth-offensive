@@ -1,69 +1,78 @@
-"""Configuration loader for ~/.greth_offensive/config.yml."""
+"""Terminal execution wrappers with allowlist and safe defaults."""
 
 from __future__ import annotations
 
-from pathlib import Path
+import shlex
+import subprocess
+from typing import Any
 
-import yaml
-
-from greth.core.config import GrethConfig
-
-CONFIG_DIR = Path.home() / ".greth_offensive"
-CONFIG_PATH = CONFIG_DIR / "config.yml"
+from greth.tools.base import BaseTool
 
 
-def default_config_dict() -> dict:
-    return {
-        "target": "https://example.com",
-        "mode": "full",
-        "model": "gpt-4o-mini",
-        "max_depth": 4,
-        "verification_required": True,
-        "enabled_agents": [
-            "reconnaissance",
-            "triage",
-            "offense",
-            "verification",
-            "report",
-            "monitoring",
-            "defense",
-            "engineering",
-            "compaction",
-            "chaining",
-        ],
-        "ui_mode": "console",
-    }
+class TerminalTool(BaseTool):
+    """Structured shell execution adapter with safety constraints."""
+
+    name = "terminal"
+
+    def __init__(self, *, allowed_commands: list[str] | None = None, timeout: int = 30, retries: int = 1) -> None:
+        self.allowed_commands = set((allowed_commands or [
+            "curl",
+            "nmap",
+            "ffuf",
+            "nuclei",
+            "httpx",
+            "amass",
+            "sqlmap",
+            "dnsrecon",
+            "gobuster",
+            "python",
+            "bash",
+            "sh",
+        ]))
+        self.timeout = timeout
+        self.retries = retries
+
+    def _validate(self, command: str) -> list[str]:
+        if not command or not command.strip():
+            raise ValueError("Empty command")
+        parts = shlex.split(command)
+        if not parts:
+            raise ValueError("No executable found in command")
+        binary = parts[0]
+        if binary not in self.allowed_commands:
+            raise ValueError(f"Command not allowed: {binary}")
+        if any(token in command for token in (";", "&&", "||", "$(", "`")):
+            raise ValueError("Unsafe shell chaining is forbidden")
+        return parts
+
+    def run(self, command: str, timeout: int | None = None, retries: int | None = None) -> dict[str, Any]:
+        validated = self._validate(command)
+        effective_timeout = timeout or self.timeout
+        effective_retries = retries if retries is not None else self.retries
+        last_result: dict[str, Any] | None = None
+
+        for attempt in range(max(1, effective_retries + 1)):
+            completed = subprocess.run(
+                validated,
+                capture_output=True,
+                text=True,
+                timeout=effective_timeout,
+                check=False,
+            )
+            last_result = {
+                "command": command,
+                "argv": validated,
+                "returncode": completed.returncode,
+                "stdout": completed.stdout.strip(),
+                "stderr": completed.stderr.strip(),
+                "ok": completed.returncode == 0,
+                "attempt": attempt + 1,
+            }
+            if completed.returncode == 0:
+                return last_result
+            if attempt < effective_retries:
+                continue
+        return last_result or {"command": command, "argv": validated, "returncode": 1, "stdout": "", "stderr": "", "ok": False}
 
 
-def ensure_default_config() -> Path:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    if not CONFIG_PATH.exists():
-        CONFIG_PATH.write_text(yaml.safe_dump(default_config_dict(), sort_keys=False), encoding="utf-8")
-    return CONFIG_PATH
-
-
-def load_config() -> dict:
-    ensure_default_config()
-    with CONFIG_PATH.open("r", encoding="utf-8") as handle:
-        loaded = yaml.safe_load(handle) or {}
-    defaults = default_config_dict()
-    defaults.update(loaded)
-    return defaults
-
-
-def build_config() -> GrethConfig:
-    data = load_config()
-    return GrethConfig(
-        target=data.get("target", "https://example.com"),
-        mode=data.get("mode", "full"),
-        model=data.get("model", "gpt-4o-mini"),
-        max_depth=int(data.get("max_depth", 4)),
-        verification_required=bool(data.get("verification_required", True)),
-        enabled_agents=list(data.get("enabled_agents", default_config_dict()["enabled_agents"])),
-        ui_mode=data.get("ui_mode", "console"),
-    )
-
-
-def load_or_create_default_config() -> GrethConfig:
-    ensure_default_config()
-    return build_config()
+TERMINAL = TerminalTool()

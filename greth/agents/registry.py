@@ -1,21 +1,36 @@
-"""Chaining agent."""
+"""Agent registry for swarm specialists."""
 
 from __future__ import annotations
 
-from greth.agents.base import AgentBase
+from greth.agents.chaining.agent import ChainingAgent
+from greth.agents.compaction.agent import CompactionAgent
+from greth.agents.defense.agent import DefenseAgent
+from greth.agents.engineering.agent import EngineeringAgent
+from greth.agents.monitoring.agent import MonitoringAgent
+from greth.agents.offense.agent import OffenseAgent
+from greth.agents.reconnaissance.agent import ReconnaissanceAgent
+from greth.agents.report.agent import ReportAgent
+from greth.agents.triage.agent import TriageAgent
+from greth.agents.verification.agent import VerificationAgent
 
 
-class ChainingAgent(AgentBase):
-    name = "chaining"
+AGENT_REGISTRY = {
+    "reconnaissance": ReconnaissanceAgent,
+    "triage": TriageAgent,
+    "offense": OffenseAgent,
+    "verification": VerificationAgent,
+    "report": ReportAgent,
+    "monitoring": MonitoringAgent,
+    "defense": DefenseAgent,
+    "engineering": EngineeringAgent,
+    "compaction": CompactionAgent,
+    "chaining": ChainingAgent,
+}
 
-    def trigger(self, finding) -> bool:
-        return finding.kind in {"NORMALIZED_FINDING", "VULNERABILITY", "EXPLOIT_CHAIN"}
 
-    def handle(self, finding):
-        return self.publish(
-            kind="CHAINED_ACTION",
-            target=finding.target,
-            payload={"chain": [finding.kind, "follow-up-check"]},
-            confidence=0.7,
-            summary=f"Chain assembled for {finding.target}",
-        )
+def get_agent(name: str, **kwargs):
+    try:
+        cls = AGENT_REGISTRY[name]
+    except KeyError as exc:  # pragma: no cover
+        raise ValueError(f"Unsupported agent: {name}") from exc
+    return cls(**kwargs)
