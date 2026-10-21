@@ -1,29 +1,93 @@
-"""Project entrypoint for Greth Offensive."""
+"""Scheduler and campaign orchestration."""
 
 from __future__ import annotations
 
-import argparse
-from typing import Sequence
+from typing import Any
 
+from greth.agents.registry import AGENT_REGISTRY
+from greth.core.blackboard import Blackboard
 from greth.core.config import GrethConfig
-from greth.core.graph import build_graph
-from greth.core.scheduler import CampaignScheduler
+from greth.core.models import CampaignState, Finding
 
 
-def run(argv: Sequence[str] | None = None) -> int:
-    """Run the Greth intelligence engine."""
-    parser = argparse.ArgumentParser(description="Greth Offensive")
-    parser.add_argument("--target", default="https://example.com", help="Target URL or scope")
-    parser.add_argument("--mode", choices=["recon", "offense", "full"], default="full", help="Campaign mode")
-    parser.add_argument("--model", default="gpt-4o-mini", help="LiteLLM-compatible model")
-    args = parser.parse_args(list(argv) if argv is not None else None)
+class CampaignScheduler:
+    """Reactive swarm scheduler using a blackboard + trigger loop."""
 
-    config = GrethConfig(target=args.target, mode=args.mode, model=args.model)
-    graph = build_graph(config)
-    scheduler = CampaignScheduler(graph=graph, config=config)
-    scheduler.run()
-    return 0
+    def __init__(self, *, config: GrethConfig, blackboard: Blackboard | None = None, ui: Any | None = None) -> None:
+        self.config = config
+        self.board = blackboard or Blackboard()
+        self.ui = ui
+        self.state = CampaignState(target=config.target)
+        self.agents: list[Any] = []
 
+    def register_agent(self, agent: Any) -> None:
+        self.agents.append(agent)
 
-if __name__ == "__main__":
-    raise SystemExit(run())
+    def build_agents(self) -> list[Any]:
+        for name in self.config.enabled_agents:
+            factory = AGENT_REGISTRY.get(name)
+            if factory is None:
+                continue
+            agent = factory(blackboard=self.board, config=self.config)
+            self.register_agent(agent)
+        return self.agents
+
+    def run(self) -> CampaignState:
+        self.state.status = "running"
+        self.build_agents()
+
+        bootstrap = Finding(
+            campaign_id=self.state.campaign_id,
+            agent="system",
+            kind="TARGET_REGISTERED",
+            target=self.config.target,
+            payload={"mode": self.config.mode, "target": self.config.target},
+            confidence=1.0,
+            summary=f"Campaign target registered: {self.config.target}",
+        )
+        self.board.write(bootstrap, topic="TARGET_REGISTERED")
+
+        if self.ui is not None:
+            self.ui.render_campaign_banner(self.config.target)
+
+        depth = 0
+        while depth < self.config.max_depth:
+            changed = False
+            current_results = list(self.board.all())
+            for finding in current_results:
+                for agent in self.agents:
+                    if hasattr(agent, "trigger") and agent.trigger(finding):
+                        try:
+                            result = agent.handle(finding)
+                        except Exception as exc:  # pragma: no cover - defensive runtime guard
+                            self.board.write(
+                                Finding(
+                                    campaign_id=self.state.campaign_id,
+                                    agent=agent.name,
+                                    kind="AGENT_ERROR",
+                                    target=finding.target,
+                                    payload={"error": str(exc), "kind": finding.kind},
+                                    confidence=0.2,
+                                    summary=f"Agent {agent.name} failed on {finding.kind}",
+                                ),
+                                topic="AGENT_ERROR",
+                            )
+                            continue
+                        if isinstance(result, Finding):
+                            self.board.write(result, topic=result.kind)
+                            changed = True
+                        elif isinstance(result, list):
+                            for item in result:
+                                if isinstance(item, Finding):
+                                    self.board.write(item, topic=item.kind)
+                            if result:
+                                changed = True
+            if not changed:
+                break
+            depth += 1
+
+        self.state.status = "completed"
+        self.state.findings = list(self.board.all())
+        if self.ui is not None:
+            self.ui.render_summary(self.state.findings)
+        return self.state

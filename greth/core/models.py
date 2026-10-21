@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+import math
 import uuid
 
 
@@ -24,10 +25,14 @@ class Finding:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     superseded_by: str | None = None
     summary: str = ""
+    tags: set[str] = field(default_factory=set)
 
-    @property
-    def pheromone(self) -> float:
-        return self.pheromone_base
+    def current_pheromone(self, now: datetime | None = None) -> float:
+        if self.half_life_sec <= 0:
+            return self.pheromone_base
+        reference = now or datetime.now(timezone.utc)
+        age = (reference - self.created_at).total_seconds()
+        return self.pheromone_base * math.pow(0.5, age / self.half_life_sec)
 
 
 @dataclass(slots=True)

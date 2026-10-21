@@ -29,5 +29,12 @@ class GrethConfig:
             "offense",
             "verification",
             "report",
+            "monitoring",
+            "defense",
+            "engineering",
+            "compaction",
+            "chaining",
         ]
     )
+    polling_interval: float = 0.5
+    ui_mode: str = "console"

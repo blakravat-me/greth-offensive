@@ -1,15 +1,21 @@
-"""Chaining agent."""
+"""Compaction agent."""
 
 from __future__ import annotations
 
 from greth.agents.base import AgentBase
 
 
-class ChainingAgent(AgentBase):
-    name = "chaining"
+class CompactionAgent(AgentBase):
+    name = "compaction"
 
     def trigger(self, finding) -> bool:
-        return finding.kind in {"VULNERABILITY", "EXPLOIT_CHAIN"}
+        return finding.kind in {"INTELLIGENCE", "OPERATIONS", "COUNTERMEASURE"}
 
     def handle(self, finding):
-        return {"status": "chain_built", "agent": self.name, "target": finding.target}
+        return self.publish(
+            kind="NORMALIZED_FINDING",
+            target=finding.target,
+            payload={"compressed": True},
+            confidence=0.66,
+            summary=f"Compacted output for {finding.target}",
+        )

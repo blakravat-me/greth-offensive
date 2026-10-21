@@ -1,15 +1,21 @@
-"""Engineering agent."""
+"""Defense agent."""
 
 from __future__ import annotations
 
 from greth.agents.base import AgentBase
 
 
-class EngineeringAgent(AgentBase):
-    name = "engineering"
+class DefenseAgent(AgentBase):
+    name = "defense"
 
     def trigger(self, finding) -> bool:
-        return finding.kind in {"TARGET_REGISTERED", "REPORT"}
+        return finding.kind in {"AGENT_ERROR", "OBSERVATION"}
 
     def handle(self, finding):
-        return {"status": "engineered", "agent": self.name, "target": finding.target}
+        return self.publish(
+            kind="COUNTERMEASURE",
+            target=finding.target,
+            payload={"response": "contain and fallback"},
+            confidence=0.4,
+            summary=f"Defense logic engaged for {finding.target}",
+        )
