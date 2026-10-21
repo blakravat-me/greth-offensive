@@ -1,4 +1,4 @@
-"""Agent base classes and swarm contracts."""
+"""Shared base classes for swarm agents."""
 
 from __future__ import annotations
 
@@ -7,6 +7,22 @@ from typing import Any
 
 from greth.core.blackboard import Blackboard
 from greth.core.models import Finding
+from greth.tools.internet import INTERNET
+from greth.tools.terminal import TERMINAL
+
+TOOL_REGISTRY = {
+    "internet": INTERNET,
+    "terminal": TERMINAL,
+    "httpx": INTERNET,
+    "bash": TERMINAL,
+}
+
+
+def get_tool(name: str):
+    tool = TOOL_REGISTRY.get(name)
+    if tool is None:
+        raise KeyError(f"Unknown tool: {name}")
+    return tool
 
 
 class AgentBase(ABC):
@@ -27,7 +43,6 @@ class AgentBase(ABC):
         payload: dict[str, Any] | None = None,
         confidence: float = 0.5,
         summary: str = "",
-        severity: str = "info",
         agent: str | None = None,
     ) -> Finding:
         finding = Finding(
@@ -37,7 +52,6 @@ class AgentBase(ABC):
             target=target,
             payload=payload or {},
             confidence=confidence,
-            severity=severity,
             summary=summary,
             pheromone_base=max(0.0, min(confidence, 1.0)),
             half_life_sec=3600,
